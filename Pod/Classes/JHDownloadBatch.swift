@@ -23,7 +23,7 @@ public enum JHDownloadTaskStatus: Int {
 public class JHDownloadBatch: NSObject {
     private var downloadInputs: [JHDownloadTask] = [JHDownloadTask]()
     private var urls:[String] = [String]()
-    private var session:NSURLSession?
+    private var session:URLSession?
     private var fileHashAlgorithm:FileHashAlgorithm!
     private var numberOfBytesDownloadedSinceStart:Int = 0
     private var startTime: NSDate?
@@ -54,7 +54,7 @@ public class JHDownloadBatch: NSObject {
             totalExpectedToWrite = Int64(fileSize)
         }//end if
         if let unwrappedURLString = urlString {
-            if self.isTaskExistWithURL(unwrappedURLString) == false {
+            if self.isTaskExistWithURL(urlString: unwrappedURLString) == false {
                 let downloadTask = JHDownloadTask(urlString: urlString!, destination: destination, totalBytesExpectedToWrite: totalExpectedToWrite, checksum: taskInfo["checksum"] as? String, fileHashAltgorithm: self.fileHashAlgorithm)
                 
                 if let identifier = taskInfo["identifier"] as? String {
@@ -72,23 +72,23 @@ public class JHDownloadBatch: NSObject {
     }
     
     func isTaskExistWithURL(urlString: String) -> Bool {
-        return self.urls.indexOf(urlString) != nil
+        return self.urls.index(of: urlString) != nil
     }
     
-    func handleDownloadFileAt(downloadFileLocation downloadFileLocation: NSURL, forDownloadURL:String) -> Bool {
-        if let downloadTask = self.downloadInfoOfTaskUrl(forDownloadURL) {
+    func handleDownloadFileAt(downloadFileLocation: NSURL, forDownloadURL:String) -> Bool {
+        if let downloadTask = self.downloadInfoOfTaskUrl(url: forDownloadURL) {
             let absoluteDestinationPath = downloadTask.absoluteDestinationPath()
-            let fileManager = NSFileManager.defaultManager()
-            if fileManager.fileExistsAtPath(absoluteDestinationPath) {
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: absoluteDestinationPath) {
                 do {
-                    try fileManager.removeItemAtPath(absoluteDestinationPath)
+                    try fileManager.removeItem(atPath: absoluteDestinationPath)
                 } catch {
                     print("Something went wrong when removing the file")
                     return false
                 }
             }
             do {
-                try fileManager.moveItemAtPath(downloadFileLocation.path!, toPath: absoluteDestinationPath)
+                try fileManager.moveItem(atPath: downloadFileLocation.path!, toPath: absoluteDestinationPath)
             } catch let error as NSError {
                 puts(error.description)
                 return false
@@ -105,9 +105,9 @@ public class JHDownloadBatch: NSObject {
         return false
     }
     
-    func captureDownloadingInfoOfDownloadTask(downloadTask: NSURLSessionDownloadTask) -> JHDownloadTask? {
-        if let url = downloadTask.originalRequest?.URL {
-            if let downloadTaskInfo = self.downloadInfoOfTaskUrl(url.absoluteString) {
+    func captureDownloadingInfoOfDownloadTask(downloadTask: URLSessionDownloadTask) -> JHDownloadTask? {
+        if let url = downloadTask.originalRequest?.url {
+            if let downloadTaskInfo = self.downloadInfoOfTaskUrl(url: url.absoluteString) {
                 downloadTaskInfo.totalBytesWritten = downloadTask.countOfBytesReceived
                 if downloadTaskInfo.totalBytesExpectedToWrite == 0 {
                     downloadTaskInfo.totalBytesExpectedToWrite = downloadTask.countOfBytesExpectedToReceive
@@ -122,8 +122,8 @@ public class JHDownloadBatch: NSObject {
     }
     
     func updateProgressOfDownloadURL(url:String, progressPercentage:Float, totalBytesWritten:Int64) -> JHDownloadTask? {
-        if let downloadTask = self.downloadInfoOfTaskUrl(url) {
-            numberOfBytesDownloadedSinceStart += totalBytesWritten - downloadTask.totalBytesWritten
+        if let downloadTask = self.downloadInfoOfTaskUrl(url: url) {
+            numberOfBytesDownloadedSinceStart += Int(totalBytesWritten) - Int(downloadTask.totalBytesWritten)
             downloadTask.totalBytesWritten = totalBytesWritten
             return downloadTask
         }//end if
@@ -136,7 +136,7 @@ public class JHDownloadBatch: NSObject {
     }
     
     func downloadInfoOfTaskUrl(url: String) -> JHDownloadTask? {
-        if let indexOfObject = urls.indexOf(url) {
+        if let indexOfObject = urls.index(of: url) {
             return downloadInputs[Int(indexOfObject)]
         } else {
             return nil
@@ -144,28 +144,28 @@ public class JHDownloadBatch: NSObject {
     }
     
     func startDownloadTask(downloadTask: JHDownloadTask) {
-        let request = NSMutableURLRequest(URL: downloadTask.getURL())
+        let request = NSMutableURLRequest(url: downloadTask.getURL() as URL)
         if downloadTask.totalBytesExpectedToWrite == 0 {
-            self.requestForTotalBytesForURL(downloadTask.getURL(), callback: { (totalBytes) -> () in
+            self.requestForTotalBytesForURL(url: downloadTask.getURL(), callback: { (totalBytes) -> () in
                 downloadTask.totalBytesExpectedToWrite = totalBytes
-                self.downloadRequest(request, task: downloadTask)
+                self.downloadRequest(request: request, task: downloadTask)
             })
         } else {
-            self.downloadRequest(request, task: downloadTask)
+            self.downloadRequest(request: request, task: downloadTask)
         }
     }
     
-    func requestForTotalBytesForURL(url: NSURL, callback: (totalBytes:Int64) -> ()) {
-        let headRequest = NSMutableURLRequest(URL: url)
+    func requestForTotalBytesForURL(url: NSURL, callback: @escaping (Int64) -> ()) {
+        let headRequest = NSMutableURLRequest(url: url as URL)
         headRequest.setValue("", forHTTPHeaderField: "Accept-Encoding")
-        headRequest.HTTPMethod = "HEAD"
+        headRequest.httpMethod = "HEAD"
         
-        let sharedSession = NSURLSession.sharedSession()
-        let headTask = sharedSession.dataTaskWithRequest(headRequest) { (data, response, error) -> Void in
+        let sharedSession = URLSession.shared
+        let headTask = sharedSession.dataTask(with: headRequest as URLRequest) { (data, response, error) -> Void in
             if let expectedContentLength = response?.expectedContentLength {
-                callback(totalBytes: expectedContentLength)
+                callback(expectedContentLength)
             } else {
-                callback(totalBytes: -1)
+                callback(-1)
             }
         }
         headTask.resume()
@@ -175,19 +175,19 @@ public class JHDownloadBatch: NSObject {
         if let error = task.downloadError {
             if let resumableData = error.userInfo[NSURLSessionDownloadTaskResumeData] as? NSData {
                 if let unwrappedSession = self.session {
-                    let downloadTask = unwrappedSession.downloadTaskWithResumeData(resumableData)
-                    task.cleanUpWithResumableData(resumableData)
+                    let downloadTask = unwrappedSession.downloadTask(withResumeData: resumableData as Data)
+                    task.cleanUpWithResumableData(data: resumableData)
                     downloadTask.resume()
                 }
             }
         } else {
-           let request = NSMutableURLRequest(URL: task.getURL())
+            let request = NSMutableURLRequest(url: task.getURL() as URL)
             request.timeoutInterval = 90
             if let unwrappedSession = self.session {
-                let downloadTask = unwrappedSession.downloadTaskWithRequest(request)
+                let downloadTask = unwrappedSession.downloadTask(with: request as URLRequest)
                 task.cleanUp()
                 downloadTask.cancel()
-                self.startDownloadTask(task)
+                self.startDownloadTask(downloadTask: task)
             }
         }
     }
@@ -196,12 +196,12 @@ public class JHDownloadBatch: NSObject {
         request.timeoutInterval = 90
         if let unwrappedSession = self.session {
             if let error = task.downloadError {
-                let downloadTask = unwrappedSession.downloadTaskWithResumeData(error.userInfo[NSURLSessionDownloadTaskResumeData] as! NSData)
+                let downloadTask = unwrappedSession.downloadTask(withResumeData: (error.userInfo[NSURLSessionDownloadTaskResumeData] as! NSData) as Data)
                 task.isDownloading = true
                 downloadTask.resume()
                 task.downloadError = nil
             } else {
-                let downloadTask = unwrappedSession.downloadTaskWithRequest(request)
+                let downloadTask = unwrappedSession.downloadTask(with: request as URLRequest)
                 task.isDownloading = true
                 downloadTask.resume()
             }
@@ -230,7 +230,7 @@ public class JHDownloadBatch: NSObject {
         self.completed = true
     }
     
-    func setDownloadingSession(inputSession: NSURLSession) {
+    func setDownloadingSession(inputSession: URLSession) {
         self.startTime = NSDate()
         self.session = inputSession
     }
@@ -238,7 +238,7 @@ public class JHDownloadBatch: NSObject {
     func continuteAllInCompleteDownloadTask() {
         for task in downloadInputs {
             if task.completed == false {
-                self.startDownloadTask(task)
+                self.startDownloadTask(downloadTask: task)
             }
         }
     }
@@ -247,9 +247,9 @@ public class JHDownloadBatch: NSObject {
         if let unwrappedSession = session {
             unwrappedSession.getTasksWithCompletionHandler({ (dataTasks, uploadTasks, downloadTasks) -> Void in
                 for downloadTask in downloadTasks {
-                    if let urlString = downloadTask.originalRequest?.URL?.absoluteString {
-                        if let _ = self.downloadInfoOfTaskUrl(urlString) {
-                            if downloadTask.state == NSURLSessionTaskState.Suspended {
+                    if let urlString = downloadTask.originalRequest?.url?.absoluteString {
+                        if let _ = self.downloadInfoOfTaskUrl(url: urlString) {
+                            if downloadTask.state == URLSessionTask.State.suspended {
                                 downloadTask.resume()
                             }
                         }
@@ -263,9 +263,9 @@ public class JHDownloadBatch: NSObject {
         if let unwrappedSession = session {
             unwrappedSession.getTasksWithCompletionHandler({ (dataTasks, uploadTasks, downloadTasks) -> Void in
                 for downloadTask in downloadTasks {
-                    if let urlString = downloadTask.originalRequest?.URL?.absoluteString {
-                        if let _ = self.downloadInfoOfTaskUrl(urlString) {
-                            if downloadTask.state == NSURLSessionTaskState.Running {
+                    if let urlString = downloadTask.originalRequest?.url?.absoluteString {
+                        if let _ = self.downloadInfoOfTaskUrl(url: urlString) {
+                            if downloadTask.state == URLSessionTask.State.running {
                                 downloadTask.suspend()
                             }
                         }
@@ -278,7 +278,7 @@ public class JHDownloadBatch: NSObject {
     func elapsedSeconds() -> Double {
         let now = NSDate()
         if let unwrappedStartTime = startTime {
-            let distanceBetweenDates = now.timeIntervalSinceDate(unwrappedStartTime)
+            let distanceBetweenDates = now.timeIntervalSince(unwrappedStartTime as Date)
             return distanceBetweenDates
         } else {
             return 0

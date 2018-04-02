@@ -39,14 +39,14 @@ public class JHDownloadTask: NSObject {
     init(url: NSURL, destination:String, totalBytesExpectedToWrite:Int64, checksum:String?, fileHashAltgorithm:FileHashAlgorithm) {
         super.init()
         self.url = url
-        self.commonInit(urlString: url.absoluteString, destination: destination, totalBytesExpectedToWriteInput: totalBytesExpectedToWrite, checksum: checksum, fileHashAlgorithm: fileHashAltgorithm)
+        self.commonInit(urlString: url.absoluteString!, destination: destination, totalBytesExpectedToWriteInput: totalBytesExpectedToWrite, checksum: checksum, fileHashAlgorithm: fileHashAltgorithm)
     }
     
     func getURL() -> NSURL {
         return self.url!
     }
     
-    func commonInit(urlString urlString: String, destination:String, totalBytesExpectedToWriteInput:Int64, checksum:String?, fileHashAlgorithm:FileHashAlgorithm) {
+    func commonInit(urlString: String, destination:String, totalBytesExpectedToWriteInput:Int64, checksum:String?, fileHashAlgorithm:FileHashAlgorithm) {
         self.urlString = urlString
         self.completed = false
         self.totalBytesWritten = 0
@@ -72,9 +72,9 @@ public class JHDownloadTask: NSObject {
     }
     
     func verifyDownload() -> Bool {
-        let fileManager = NSFileManager.defaultManager()
+        let fileManager = FileManager.default
         let absoluteDestinationPath = self.absoluteDestinationPath()
-        if fileManager.fileExistsAtPath(absoluteDestinationPath) == false {
+        if fileManager.fileExists(atPath: absoluteDestinationPath) == false {
             return false
         }
         
@@ -84,8 +84,8 @@ public class JHDownloadTask: NSObject {
             isVerified = calculatedChecksum == unwrappedChecksum
         } else {
             do {
-                let fileAttributes = try fileManager.attributesOfItemAtPath(absoluteDestinationPath)
-                let fileSize = (fileAttributes[NSFileSize] as! NSNumber).longLongValue
+                let fileAttributes = try fileManager.attributesOfItem(atPath: absoluteDestinationPath)
+                let fileSize = (fileAttributes[FileAttributeKey.size] as! NSNumber).int64Value
                 isVerified = fileSize == self.totalBytesExpectedToWrite
             } catch let error as NSError {
                 print("Error Received \(error.localizedDescription)")
@@ -107,11 +107,11 @@ public class JHDownloadTask: NSObject {
     func retrieveChecksumDownnloadedFile() -> String {
         let absolutePath = self.absoluteDestinationPath()
         if fileHashAlgorithm == FileHashAlgorithm.MD5 {
-            return FileHash.md5HashOfFileAtPath(absolutePath)
+            return FileHash.md5HashOfFile(atPath: absolutePath)
         } else if fileHashAlgorithm == FileHashAlgorithm.SHA1 {
-            return FileHash.sha1HashOfFileAtPath(absolutePath)
+            return FileHash.sha1HashOfFile(atPath: absolutePath)
         } else if fileHashAlgorithm == FileHashAlgorithm.SHA512 {
-            return FileHash.sha512HashOfFileAtPath(absolutePath)
+            return FileHash.sha512HashOfFile(atPath: absolutePath)
         }//end else
         
         return "-1"
@@ -119,11 +119,11 @@ public class JHDownloadTask: NSObject {
     
     func prepareFolderForDestination() {
         let absoluteDestinationPath = self.absoluteDestinationPath()
-        let containerFolderPath = (absoluteDestinationPath as NSString).stringByDeletingLastPathComponent
-        let fileManager = NSFileManager.defaultManager()
-        if fileManager.fileExistsAtPath(containerFolderPath) == false {
+        let containerFolderPath = (absoluteDestinationPath as NSString).deletingLastPathComponent
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: containerFolderPath) == false {
             do {
-                try fileManager.createDirectoryAtPath(containerFolderPath, withIntermediateDirectories: true, attributes: nil)
+                try fileManager.createDirectory(atPath: containerFolderPath, withIntermediateDirectories: true, attributes: nil)
             } catch let error as NSError {
                 print("Create Directory Error: \(error.localizedDescription)")
             } catch {
@@ -131,7 +131,7 @@ public class JHDownloadTask: NSObject {
             }
         }
         
-        if fileManager.fileExistsAtPath(absoluteDestinationPath) {
+        if fileManager.fileExists(atPath: absoluteDestinationPath) {
             if self.verifyDownload() {
                 self.cachedProgress = 1
                 // retain file - this task has been completed
@@ -159,11 +159,11 @@ public class JHDownloadTask: NSObject {
     }
     
     func deleteDestinationFile() {
-        let fileManager = NSFileManager.defaultManager()
+        let fileManager = FileManager.default
         let absoluteDestinationPath = self.absoluteDestinationPath()
-        if fileManager.fileExistsAtPath(absoluteDestinationPath) {
+        if fileManager.fileExists(atPath: absoluteDestinationPath) {
             do {
-                try fileManager.removeItemAtPath(absoluteDestinationPath)
+                try fileManager.removeItem(atPath: absoluteDestinationPath)
             } catch let error as NSError {
                 print("Removing Existing File Error: \(error.localizedDescription)")
             }
@@ -171,13 +171,14 @@ public class JHDownloadTask: NSObject {
     }
     
     func absoluteDestinationPath() -> String {
-        let documentDictionary = NSSearchPathForDirectoriesInDomains(.DocumentDirectory, .UserDomainMask, true).first
+        let documentDictionary = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first
         return "\(documentDictionary!)/\(self.destination!)"
     }
     
     func isHittingErrorBecauseOffline() -> Bool {
-        if let _ = self.downloadError, unwrappedLastErrorMessage = self.lastErrorMessage {
-            return unwrappedLastErrorMessage.containsString("(Code \(NSURLError.NotConnectedToInternet))") || unwrappedLastErrorMessage.containsString("(Code \(NSURLError.NetworkConnectionLost))")
+        if let _ = self.downloadError, let unwrappedLastErrorMessage = self.lastErrorMessage {
+            
+            return unwrappedLastErrorMessage.contains("(Code \(NSURLErrorNotConnectedToInternet))") || unwrappedLastErrorMessage.contains("(Code \(NSURLErrorNetworkConnectionLost))")
         } else {
             return false
         }
@@ -185,8 +186,8 @@ public class JHDownloadTask: NSObject {
     
     func isHittingErrorConnectingToServer() -> Bool {
         if let unwrappedLastErrorMessage = self.lastErrorMessage {
-            return unwrappedLastErrorMessage.containsString("(Code \(NSURLError.RedirectToNonExistentLocation))") || unwrappedLastErrorMessage.containsString("(Code \(NSURLError.BadServerResponse))") ||
-                unwrappedLastErrorMessage.containsString("(Code \(NSURLError.ZeroByteResource))") || unwrappedLastErrorMessage.containsString("(Code \(NSURLError.TimedOut))")
+            return unwrappedLastErrorMessage.contains("(Code \(NSURLErrorRedirectToNonExistentLocation))") || unwrappedLastErrorMessage.contains("(Code \(NSURLErrorBadServerResponse))") ||
+                unwrappedLastErrorMessage.contains("(Code \(NSURLErrorZeroByteResource))") || unwrappedLastErrorMessage.contains("(Code \(NSURLErrorTimedOut))")
         } else {
             return false
         }
@@ -199,7 +200,7 @@ public class JHDownloadTask: NSObject {
     func fullErrorDescription() -> String {
         if let unwrappedError = self.downloadError {
             let errorCode = unwrappedError.code
-            return "Downloading URL %@ failed because of error: \(self.urlString) (Code \(errorCode))"
+            return "Downloading URL %@ failed because of error: \(String(describing: self.urlString)) (Code \(errorCode))"
         } else {
             return "No Error"
         }

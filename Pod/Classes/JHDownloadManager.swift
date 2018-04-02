@@ -40,18 +40,23 @@ extension JHDownloadManagerUIDelegate {
     func didReachIndividualProgress(progress: Float, onDownloadTask:JHDownloadTask) {}
 }
 
-public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
-    private var downloadSession:NSURLSession?
+public class JHDownloadManager: NSObject, URLSessionDownloadDelegate {
+//    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+//        <#code#>
+//    }
+    
+    private var downloadSession:URLSession?
     private var currentBatch:JHDownloadBatch?
     private var initialDownloadedBytes:Int64 = 0
     private var totalBytes:Int64 = 0
-    private var internetReachability:Reachability?
+    private var internetReachability = Reachability()
    
     public var fileHashAlgorithm:FileHashAlgorithm = FileHashAlgorithm.SHA1
     
     public static let sharedInstance = JHDownloadManager()
-    static let session = NSURLSession(configuration: NSURLSessionConfiguration.backgroundSessionConfigurationWithIdentifier("com.jameshuynh.JHDownloadManager"), delegate: sharedInstance, delegateQueue: nil)
     
+    static let session = URLSession(configuration: URLSessionConfiguration.background(withIdentifier: "com.jameshuynh.JHDownloadManager"), delegate: sharedInstance, delegateQueue: nil)
+
     public var dataDelegate:JHDownloadManagerDataDelegate?
     public var uiDelegate:JHDownloadManagerUIDelegate?
     
@@ -101,7 +106,7 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     public func addBatch(arrayOfDownloadInformation:[[String: AnyObject]]) -> [JHDownloadTask] {
         let batch = JHDownloadBatch(fileHashAlgorithm: self.fileHashAlgorithm)
         for downloadTask in arrayOfDownloadInformation {
-            batch.addTask(downloadTask)
+            batch.addTask(taskInfo: downloadTask)
         }
         self.currentBatch = batch
         return batch.downloadObjects()
@@ -118,8 +123,8 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     public func downloadRateAndRemainingTime() -> [String]? {
         if let unwrappedCurrentBatch = currentBatch {
             let rate = unwrappedCurrentBatch.downloadRate()
-            let bytesPerSeconds = String(format: "%@/s", NSByteCountFormatter.stringFromByteCount(rate, countStyle: NSByteCountFormatterCountStyle.File))
-            let remainingTime = self.remainingTimeGivenDownloadingRate(rate)
+            let bytesPerSeconds = String(format: "%@/s", ByteCountFormatter.string(fromByteCount: rate, countStyle: ByteCountFormatter.CountStyle.file))
+            let remainingTime = self.remainingTimeGivenDownloadingRate(downloadRate: rate)
             return [bytesPerSeconds, remainingTime]
         } else {
             return nil
@@ -141,7 +146,7 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
             }
             let actualDownloadedBytes = bytesInfo["totalDownloadedBytes"]! + initialDownloadedBytes
             let timeRemaining:Float = Float(actualTotalBytes - actualDownloadedBytes) / Float(downloadRate)
-            return self.formatTimeFromSeconds(Int64(timeRemaining))
+            return self.formatTimeFromSeconds(numberOfSeconds: Int64(timeRemaining))
         }
         
         return "Unknown"
@@ -157,12 +162,12 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     
     public func startDownloadingCurrentBatch() {
         if let currentBatchUnwrapped = currentBatch {
-            self.startADownloadBatch(currentBatchUnwrapped)
+            self.startADownloadBatch(batch: currentBatchUnwrapped)
         }
     }
     
     func downloadBatch(downloadInformation:[[String: AnyObject]]) {
-        self.addBatch(downloadInformation)
+        self.addBatch(arrayOfDownloadInformation: downloadInformation)
         self.startDownloadingCurrentBatch()
     }
     
@@ -171,18 +176,18 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
             currentBatch = JHDownloadBatch.init(fileHashAlgorithm: self.fileHashAlgorithm)
         }//end if
         
-        if let downloadTaskInfo = self.currentBatch!.addTask(task) {
+        if let downloadTaskInfo = self.currentBatch!.addTask(taskInfo: task) {
             if downloadTaskInfo.completed {
-                self.processCompletedDownload(downloadTaskInfo)
-                self.postToUIDelegateOnIndividualDownload(downloadTaskInfo)
+                self.processCompletedDownload(task: downloadTaskInfo)
+                self.postToUIDelegateOnIndividualDownload(task: downloadTaskInfo)
             } else if(currentBatch!.isDownloading()) {
-                currentBatch!.startDownloadTask(downloadTaskInfo)
+                currentBatch!.startDownloadTask(downloadTask: downloadTaskInfo)
             }
            
             currentBatch!.updateCompleteStatus()
             if let unwrappedUIDelegate = self.uiDelegate {
-                dispatch_async(dispatch_get_main_queue()) {
-                    unwrappedUIDelegate.didReachProgress(self.overallProgress())
+                DispatchQueue.main.async {
+                    unwrappedUIDelegate.didReachProgress(progress: self.overallProgress())
                 }
             }
             if currentBatch!.completed {
@@ -196,21 +201,14 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     }
     
     func listenToInternetConnectionChange() {
-        do {
-            self.internetReachability = try Reachability.reachabilityForInternetConnection()
-        } catch {
-            print("Unable to create Reachability")
-            return
-        }
-       
         self.internetReachability?.whenReachable = { reachability in
-            dispatch_async(dispatch_get_main_queue()) {
+            DispatchQueue.main.async {
                 self.continueIncompletedDownloads()
             }
         }
         
         self.internetReachability?.whenUnreachable = { reachability in
-            dispatch_async(dispatch_get_main_queue()) {
+            DispatchQueue.main.async {
                 self.continueIncompletedDownloads()
             }
         }
@@ -236,16 +234,16 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     
     func processCompletedDownload(task:JHDownloadTask) {
         if let dataDelegateUnwrapped = self.dataDelegate {
-            dataDelegateUnwrapped.didFinishDownloadTask(task)
+            dataDelegateUnwrapped.didFinishDownloadTask(downloadTask: task)
         }
         
         if let uiDelegateUnwrapped = self.uiDelegate {
-            dispatch_async(dispatch_get_main_queue(), {
-                uiDelegateUnwrapped.didFinishOnDownloadTaskUI(task)
-            })
+            DispatchQueue.main.async {
+                uiDelegateUnwrapped.didFinishOnDownloadTaskUI(task: task)
+            }
         }
         
-        if let currentBatchUnwrapped = currentBatch where currentBatchUnwrapped.completed {
+        if let currentBatchUnwrapped = currentBatch, currentBatchUnwrapped.completed {
             self.postCompleteAll()
         }
     }
@@ -256,20 +254,20 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
         }
         
         if let uiDelegateUnwrapped = self.uiDelegate {
-            dispatch_async(dispatch_get_main_queue(), {
+            DispatchQueue.main.async {
                 uiDelegateUnwrapped.didFinishAll()
-            })
+            }
         }
     }
     
     // MARK: - NSURLSessionDelegate
-    public func URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError error: NSError?) {
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let unwrappedError = error {
-            if let downloadURL = task.originalRequest?.URL?.absoluteString, unwrappedCurrentBatch = currentBatch {
-                if let downloadTaskInfo = unwrappedCurrentBatch.downloadInfoOfTaskUrl(downloadURL) {
-                    downloadTaskInfo.captureReceivedError(unwrappedError)
-                    currentBatch?.redownloadRequestOfTask(downloadTaskInfo)
-                    self.postDownloadErrorToUIDelegate(downloadTaskInfo)
+            if let downloadURL = task.originalRequest?.url?.absoluteString, let unwrappedCurrentBatch = currentBatch {
+                if let downloadTaskInfo = unwrappedCurrentBatch.downloadInfoOfTaskUrl(url: downloadURL) {
+                    downloadTaskInfo.captureReceivedError(error: unwrappedError as NSError)
+                    currentBatch?.redownloadRequestOfTask(task: downloadTaskInfo)
+                    self.postDownloadErrorToUIDelegate(task: downloadTaskInfo)
                 }
             }
         }
@@ -279,17 +277,17 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
         JHDownloadManager.session.invalidateAndCancel()
     }
     
-    public func URLSession(session: NSURLSession, downloadTask: NSURLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if let downloadURL = downloadTask.originalRequest?.URL?.absoluteString, currentBatchUnwrapped = currentBatch {
+    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        if let downloadURL = downloadTask.originalRequest?.url?.absoluteString, let currentBatchUnwrapped = currentBatch {
             let progress = Float(totalBytesWritten) / Float(totalBytesExpectedToWrite)
-            if let downloadTaskInfo = currentBatchUnwrapped.updateProgressOfDownloadURL(downloadURL, progressPercentage: progress, totalBytesWritten: totalBytesWritten) {
+            if let downloadTaskInfo = currentBatchUnwrapped.updateProgressOfDownloadURL(url: downloadURL, progressPercentage: progress, totalBytesWritten: totalBytesWritten) {
                 self.postProgressToUIDelegate()
-                self.postToUIDelegateOnIndividualDownload(downloadTaskInfo)
+                self.postToUIDelegateOnIndividualDownload(task: downloadTaskInfo)
             }
         }
     }
    
-    public func URLSession(session: NSURLSession, downloadTask: NSURLSessionDownloadTask, didResumeAtOffset fileOffset: Int64, expectedTotalBytes: Int64) {
+    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didResumeAtOffset fileOffset: Int64, expectedTotalBytes: Int64) {
         // do nothing for now
     }
     
@@ -297,17 +295,17 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     
     func startADownloadBatch(batch:JHDownloadBatch) {
         let session = JHDownloadManager.session
-        batch.setDownloadingSession(session)
+        batch.setDownloadingSession(inputSession: session)
         session.getTasksWithCompletionHandler { (dataTasks, uploadTasks, downloadTasks) -> Void in
             for task in batch.downloadObjects() {
                 var isDownloading = false
                 let url = task.getURL()
                 for downloadTask in downloadTasks {
-                    if url.absoluteString == downloadTask.originalRequest?.URL?.absoluteString {
-                        if let downloadTaskInfo = batch.captureDownloadingInfoOfDownloadTask(downloadTask) {
-                            self.postToUIDelegateOnIndividualDownload(downloadTaskInfo)
+                    if url.absoluteString == downloadTask.originalRequest?.url?.absoluteString {
+                        if let downloadTaskInfo = batch.captureDownloadingInfoOfDownloadTask(downloadTask: downloadTask) {
+                            self.postToUIDelegateOnIndividualDownload(task: downloadTaskInfo)
                             isDownloading = true
-                            if downloadTask.state == NSURLSessionTaskState.Suspended {
+                            if downloadTask.state == URLSessionTask.State.suspended {
                                 downloadTask.resume()
                             }//end if
                         }
@@ -315,34 +313,34 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
                 }//end for
              
                 if task.completed == true {
-                    self.processCompletedDownload(task)
-                    self.postToUIDelegateOnIndividualDownload(task)
+                    self.processCompletedDownload(task: task)
+                    self.postToUIDelegateOnIndividualDownload(task: task)
                 } else if isDownloading == false {
-                    batch.startDownloadTask(task)
+                    batch.startDownloadTask(downloadTask: task)
                 }
             }//end for
             
             batch.updateCompleteStatus()
             if let uiDelegateUnwrapped = self.uiDelegate {
-                dispatch_async(dispatch_get_main_queue(), {
-                    uiDelegateUnwrapped.didReachProgress(self.overallProgress())
-                })
+                DispatchQueue.main.async {
+                    uiDelegateUnwrapped.didReachProgress(progress: self.overallProgress())
+                }
             }
             if batch.completed {
                 self.postCompleteAll()
             }
         }
     }
-   
-    public func URLSession(session: NSURLSession, downloadTask: NSURLSessionDownloadTask, didFinishDownloadingToURL location: NSURL) {
-        if let downloadURL = downloadTask.originalRequest?.URL?.absoluteString, currentBatchUnwrapped = self.currentBatch {
-            if let downloadTask = currentBatchUnwrapped.downloadInfoOfTaskUrl(downloadURL) {
-                let finalResult = currentBatchUnwrapped.handleDownloadFileAt(downloadFileLocation: location, forDownloadURL: downloadURL)
+    
+    public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        if let downloadURL = downloadTask.originalRequest?.url?.absoluteString, let currentBatchUnwrapped = self.currentBatch {
+            if let downloadTask = currentBatchUnwrapped.downloadInfoOfTaskUrl(url: downloadURL) {
+                let finalResult = currentBatchUnwrapped.handleDownloadFileAt(downloadFileLocation: location as NSURL, forDownloadURL: downloadURL)
                 if finalResult {
-                    self.processCompletedDownload(downloadTask)
+                    self.processCompletedDownload(task: downloadTask)
                 } else {
                     downloadTask.cleanUp()
-                    currentBatchUnwrapped.startDownloadTask(downloadTask)
+                    currentBatchUnwrapped.startDownloadTask(downloadTask: downloadTask)
                     self.postProgressToUIDelegate()
                 }
             } else {
@@ -353,27 +351,27 @@ public class JHDownloadManager: NSObject, NSURLSessionDownloadDelegate {
     
     func postProgressToUIDelegate() {
         if let uiDelegateUnwrapped = self.uiDelegate {
-            dispatch_async(dispatch_get_main_queue(), {
+            DispatchQueue.main.async {
                 let overallProgress = self.overallProgress()
-                uiDelegateUnwrapped.didReachProgress(overallProgress)
-            })
+                uiDelegateUnwrapped.didReachProgress(progress: overallProgress)
+            }
         }
     }
     
     func postToUIDelegateOnIndividualDownload(task:JHDownloadTask) {
         if let uiDelegateUnwrapped = self.uiDelegate {
-            dispatch_async(dispatch_get_main_queue(), {
+            DispatchQueue.main.async {
                 task.cachedProgress = task.downloadingProgress()
-                uiDelegateUnwrapped.didReachIndividualProgress(task.cachedProgress, onDownloadTask: task)
-            })
+                uiDelegateUnwrapped.didReachIndividualProgress(progress: task.cachedProgress, onDownloadTask: task)
+            }
         }
     }
     
     func postDownloadErrorToUIDelegate(task:JHDownloadTask) {
         if let uiDelegateUnwrapped = self.uiDelegate {
-            dispatch_async(dispatch_get_main_queue(), {
-                uiDelegateUnwrapped.didHitDownloadErrorOnTask(task)
-            })
+            DispatchQueue.main.async {
+                uiDelegateUnwrapped.didHitDownloadErrorOnTask(task: task)
+            }
         }
     }
 }
